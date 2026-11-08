@@ -9,9 +9,10 @@ CREATE EXTENSION IF NOT EXISTS btree_gist;
 -- day/month components its result under DST could depend on the session's
 -- TimeZone. An index or exclusion-constraint expression must be IMMUTABLE. A
 -- whole-minutes interval (make_interval(mins => n)) has no calendar component,
--- so it is a fixed physical duration and genuinely time-zone independent. We
--- assert that explicitly in our own function. This is safe ONLY because the one
--- caller below always passes whole minutes, never a calendar interval.
+-- so it is a fixed physical duration and genuinely time-zone independent. The
+-- function below is declared IMMUTABLE on that basis, and takes `mins integer`,
+-- so no calendar interval (days, months) can be passed to it; Postgres does not
+-- verify the IMMUTABLE claim, the integer parameter is what keeps it true.
 CREATE OR REPLACE FUNCTION add_minutes_immutable(ts timestamptz, mins integer)
 RETURNS timestamptz
 LANGUAGE sql
