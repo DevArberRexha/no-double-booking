@@ -1,0 +1,22 @@
+{
+  "name": "no-double-booking",
+  "version": "0.1.0",
+  "description": "Time-zone-safe slot computation plus a PostgreSQL constraint that makes double bookings impossible, even under a race.",
+  "license": "MIT",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/pg": "^8.11.10",
+    "fast-check": "^3.23.1",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  },
+  "dependencies": {
+    "pg": "^8.13.1"
+  }
+}
