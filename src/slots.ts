@@ -35,11 +35,11 @@ export interface ServiceInput {
 
 /**
  * A date-specific override for a single calendar date. `is_unavailable`
- * blocks the whole day regardless of the weekly `Availability` windows;
- * otherwise `start_time`/`end_time` windows *replace* that day's weekly
- * windows entirely (not merge with them) — matching cal.com's date-override
- * semantics. Multiple override rows for the same date all apply (e.g. two
- * custom ranges), same as multiple weekly `Availability` rows for a day.
+ * blocks the whole day regardless of the weekly windows; otherwise
+ * `start_time`/`end_time` windows *replace* that day's weekly windows
+ * entirely (they are not merged with them). Multiple override rows for the
+ * same date all apply (e.g. two custom ranges), as do multiple weekly windows
+ * for one day.
  */
 export interface AvailabilityOverrideInput {
   start_time: string | null;
@@ -211,14 +211,12 @@ function rangesOverlap(
  * `formatToParts` rather than the formatted string directly so the field
  * order can never depend on locale/engine formatting quirks.
  *
- * Callers deriving a `date` to hand to `computeAvailableSlots` /
- * `getAvailableSlotsForResource` from a UTC instant (e.g. a booking's
- * `start_at`) MUST go through this, not `instant.toISOString().slice(0, 10)`
- * — the latter is the resource's calendar date only when `timeZone` is UTC.
- * In any negative-UTC-offset zone (e.g. America/New_York), a late-evening
- * local instant lands on the *next* UTC calendar day, so the naive slice
- * queries the wrong date and a slot `/slots` just offered comes back absent
- * from the recomputed list.
+ * Derive the `date` passed to `computeAvailableSlots` from a UTC instant
+ * (e.g. a booking's `start_at`) with this, not
+ * `instant.toISOString().slice(0, 10)`: the latter is the resource's calendar
+ * date only when `timeZone` is UTC. In any negative-UTC-offset zone (e.g.
+ * America/New_York), a late-evening local instant lands on the next UTC
+ * calendar day, so the naive slice would compute slots for the wrong date.
  */
 export function zonedDateString(instant: Date, timeZone: string): string {
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -241,12 +239,12 @@ export function zonedDateString(instant: Date, timeZone: string): string {
  * OWN `buffer_min` before overlap is tested — `tstzrange(start_at,
  * add_minutes_immutable(end_at, buffer_min))` per row, for both rows. Padding
  * only one side (e.g. only the existing booking, never the candidate) is the
- * bug this function exists to make impossible to reintroduce: it lets
- * `/slots` offer, and an app-level overlap check accept, a candidate that the
- * DB constraint then rejects — a false SLOT_TAKEN for the customer.
+ * bug this function exists to rule out: it would let slot computation, or an
+ * application-level overlap check, accept a candidate that the database
+ * constraint then rejects.
  *
- * Shared by `computeAvailableSlots` (what's offered) and both booking routes
- * (what's accepted) so the two can't independently drift out of parity.
+ * `computeAvailableSlots` uses it to decide what to offer; an application-level
+ * pre-check can use it to mirror what the database will accept.
  */
 export function bookingRangesConflict(
   aStart: Date,
@@ -338,11 +336,10 @@ export function computeAvailableSlots(
           }))
       : availability.filter((window) => window.day_of_week === dayOfWeek);
 
-  // Nothing stops an owner saving two ranges that overlap on one day (or
-  // two custom-hours overrides for one date), and each window used to be
-  // stepped on its own grid — so 09:00-17:00 twice listed every start time
-  // twice, and 09:00-12:00 plus 10:00-13:00 offered slots overlapping each
-  // other. Hours are a union: overlapping windows merge into one before
+  // Two ranges may overlap on one day (or two custom-hours overrides for one
+  // date). Stepping each on its own grid would list start times twice and
+  // offer slots overlapping each other (09:00-12:00 plus 10:00-13:00), so
+  // hours are treated as a union: overlapping windows merge into one before
   // stepping. Windows that only TOUCH (09:00-10:00, 10:00-12:00) stay
   // separate so their grids are unchanged — they can never share a start.
   const windowsUtc = mergeOverlappingRanges(
@@ -393,8 +390,6 @@ export function computeAvailableSlots(
 
       // Pad the CANDIDATE's own end by this service's buffer_min too, not
       // just the existing booking's — see bookingRangesConflict's docstring.
-      // A one-sided pad here is what let /slots offer a slot the book route
-      // and the DB EXCLUDE constraint both then reject.
       const conflictsWithBooking = activeBookings.some((booking) =>
         bookingRangesConflict(
           start,
