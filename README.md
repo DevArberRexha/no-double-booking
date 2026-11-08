@@ -158,7 +158,7 @@ check-then-insert without the constraint: 25 of 25 won
 - **Property tests** (fast-check, `test/slots.property.test.ts`), over six time
   zones and every day of a year: no offered slot overlaps an active booking plus
   either side's buffer; every slot starts inside an availability window in the
-  resource's zone and has exactly the service duration; slots never overlap each
+  resource's zone, ends by the window end, and has exactly the service duration; slots never overlap each
   other; adding a booking never adds slots.
 - **DST examples** (`test/slots-dst.test.ts`): Europe/Zurich and Europe/Belgrade
   on 2026-10-25 (25-hour day, repeated 02:00) and 2027-03-28 (23-hour day,
