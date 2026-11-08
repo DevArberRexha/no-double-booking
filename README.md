@@ -1,5 +1,7 @@
 # no-double-booking
 
+[![CI](https://github.com/DevArberRexha/no-double-booking/actions/workflows/ci.yml/badge.svg)](https://github.com/DevArberRexha/no-double-booking/actions/workflows/ci.yml)
+
 A small TypeScript reference implementation and proof that a booking system can make double
 bookings **impossible**, not merely unlikely.
 
