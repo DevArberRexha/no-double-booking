@@ -12,6 +12,9 @@ const EXCLUSION_VIOLATION = "23P01";
 /** SQLSTATE for serialization_failure under SERIALIZABLE isolation. */
 const SERIALIZATION_FAILURE = "40001";
 
+/** SQLSTATE for deadlock_detected: concurrent inserts of partially overlapping ranges can wait on each other. */
+const DEADLOCK_DETECTED = "40P01";
+
 function errorCode(error: unknown): string | undefined {
   if (typeof error === "object" && error !== null && "code" in error) {
     const code = (error as { code: unknown }).code;
@@ -32,57 +35,31 @@ export function isExclusionViolation(error: unknown): boolean {
   );
 }
 
-/** Both an exclusion violation and a serialization failure are safe to retry once. */
+/** An exclusion violation, a serialization failure or a deadlock victim is a conflict worth one more attempt. */
 export function isRetryableConflict(error: unknown): boolean {
-  return errorCode(error) === SERIALIZATION_FAILURE || isExclusionViolation(error);
+  const code = errorCode(error);
+  return code === SERIALIZATION_FAILURE || code === DEADLOCK_DETECTED || isExclusionViolation(error);
 }
 
 /**
- * Runs `attempt` once and retries exactly once on a retryable conflict. A
- * second conflict propagates, for the caller to map to a 409.
+ * Runs `attempt(1)` and, on a retryable conflict, runs `attempt(2)` once.
+ * A second conflict propagates, for the caller to map to a 409.
+ *
+ * Contract: re-running the same insert can only conflict again, so `attempt`
+ * must redo its decision on the second call: re-read the current bookings and
+ * pick a slot again (or give up by throwing a non-conflict error) before
+ * inserting. A serialization failure (40001) or deadlock (40P01) is the case where this helps with
+ * no change of slot: the transaction is simply re-run on a fresh snapshot. An
+ * exclusion violation (23P01) means the slot is taken, so the second attempt
+ * must choose differently.
  */
-export async function withConflictRetry<T>(attempt: () => Promise<T>): Promise<T> {
+export async function withConflictRetry<T>(
+  attempt: (attemptNumber: 1 | 2) => Promise<T>
+): Promise<T> {
   try {
-    return await attempt();
+    return await attempt(1);
   } catch (error) {
     if (!isRetryableConflict(error)) throw error;
-    return attempt();
+    return attempt(2);
   }
-}
-
-// ─── Paid holds ─────────────────────────────────────────────────────────────
-//
-// A booking awaiting payment holds its slot (it counts against the
-// constraint) until `paymentExpiresAt`. A lapsed hold is free time; it must be
-// released before the next insert, because the constraint would otherwise
-// refuse it.
-
-/** Grace past the deadline before a hold counts as lapsed, so a checkout finishing right at the deadline is not raced. */
-export const HOLD_SKEW_MS = 2 * 60 * 1000;
-
-export interface HoldState {
-  status: "PENDING" | "CONFIRMED" | "CANCELLED" | "NO_SHOW";
-  awaitingPayment: boolean;
-  paymentExpiresAt: Date | null;
-}
-
-export function holdCutoff(now: Date = new Date()): Date {
-  return new Date(now.getTime() - HOLD_SKEW_MS);
-}
-
-/** A paid hold whose checkout window has lapsed. */
-export function isLapsedHold(hold: HoldState, now: Date = new Date()): boolean {
-  return (
-    hold.awaitingPayment &&
-    hold.paymentExpiresAt !== null &&
-    hold.paymentExpiresAt < holdCutoff(now)
-  );
-}
-
-/** Whether a booking still occupies its slot: PENDING or CONFIRMED, minus lapsed holds. */
-export function holdsSlot(hold: HoldState, now: Date = new Date()): boolean {
-  return (
-    (hold.status === "PENDING" || hold.status === "CONFIRMED") &&
-    !isLapsedHold(hold, now)
-  );
 }

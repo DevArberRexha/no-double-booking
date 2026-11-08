@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  HOLD_SKEW_MS,
-  holdsSlot,
+  isRetryableConflict,
   isExclusionViolation,
   withConflictRetry,
 } from "../src/conflicts.js";
@@ -12,6 +11,15 @@ describe("isExclusionViolation", () => {
     expect(isExclusionViolation(new Error('conflicting key value violates exclusion constraint "bookings_no_overlap"'))).toBe(true);
     expect(isExclusionViolation(new Error("connection reset"))).toBe(false);
     expect(isExclusionViolation(null)).toBe(false);
+  });
+});
+
+describe("isRetryableConflict", () => {
+  it("accepts 23P01, 40001 and 40P01 and nothing else", () => {
+    for (const code of ["23P01", "40001", "40P01"]) {
+      expect(isRetryableConflict(Object.assign(new Error("x"), { code }))).toBe(true);
+    }
+    expect(isRetryableConflict(Object.assign(new Error("x"), { code: "23505" }))).toBe(false);
   });
 });
 
@@ -28,6 +36,15 @@ describe("withConflictRetry", () => {
     expect([value, calls]).toEqual(["ok", 2]);
   });
 
+  it("tells the callback which attempt it is, so the second can re-pick", async () => {
+    const seen: number[] = [];
+    await withConflictRetry(async (n) => {
+      seen.push(n);
+      if (n === 1) throw conflict;
+    });
+    expect(seen).toEqual([1, 2]);
+  });
+
   it("surfaces a second conflict and never retries other errors", async () => {
     let calls = 0;
     await expect(withConflictRetry(async () => { calls += 1; throw conflict; })).rejects.toBe(conflict);
@@ -36,19 +53,5 @@ describe("withConflictRetry", () => {
     const other = new Error("boom");
     await expect(withConflictRetry(async () => { calls += 1; throw other; })).rejects.toBe(other);
     expect(calls).toBe(1);
-  });
-});
-
-describe("holdsSlot", () => {
-  const now = new Date("2027-01-01T12:00:00Z");
-  it("a paid hold frees the slot only after the deadline plus skew", () => {
-    const deadline = new Date(now.getTime() - HOLD_SKEW_MS + 1_000);
-    expect(holdsSlot({ status: "PENDING", awaitingPayment: true, paymentExpiresAt: deadline }, now)).toBe(true);
-    const lapsed = new Date(now.getTime() - HOLD_SKEW_MS - 1_000);
-    expect(holdsSlot({ status: "PENDING", awaitingPayment: true, paymentExpiresAt: lapsed }, now)).toBe(false);
-  });
-  it("cancelled never holds; a hold without a deadline always holds", () => {
-    expect(holdsSlot({ status: "CANCELLED", awaitingPayment: false, paymentExpiresAt: null }, now)).toBe(false);
-    expect(holdsSlot({ status: "PENDING", awaitingPayment: true, paymentExpiresAt: null }, now)).toBe(true);
   });
 });
