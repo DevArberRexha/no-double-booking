@@ -1,7 +1,6 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 import {
-  bookingRangesConflict,
   computeAvailableSlots,
   type AvailabilityWindowInput,
   type BookingStatus,
@@ -116,16 +115,12 @@ describe("computeAvailableSlots properties", () => {
           for (const slot of slots) {
             for (const b of bookings) {
               if (b.status !== "PENDING" && b.status !== "CONFIRMED") continue;
-              expect(
-                bookingRangesConflict(
-                  slot.start,
-                  slot.end,
-                  service.buffer_min,
-                  b.start_at,
-                  b.end_at,
-                  b.service.buffer_min
-                )
-              ).toBe(false);
+              // Independent oracle: padded half-open intervals overlap.
+              const aEnd = slot.end.getTime() + service.buffer_min * 60_000;
+              const bEnd = b.end_at.getTime() + b.service.buffer_min * 60_000;
+              const overlap =
+                slot.start.getTime() < bEnd && b.start_at.getTime() < aEnd;
+              expect(overlap).toBe(false);
             }
           }
         }
@@ -134,7 +129,7 @@ describe("computeAvailableSlots properties", () => {
     );
   });
 
-  it("every slot lies inside an availability window in the service's time zone", () => {
+  it("every slot lies inside an availability window in the resource's time zone", () => {
     fc.assert(
       fc.property(
         fc.constantFrom(...ZONES),
@@ -158,8 +153,12 @@ describe("computeAvailableSlots properties", () => {
             const start = wallClock(slot.start, zone);
             expect(start.date).toBe(date);
             expect(start.minutes).toBeGreaterThanOrEqual(win.start);
-            // A slot never extends past the window end, measured in real elapsed
-            // time from the window's first instant (DST days are 23 or 25 hours).
+            // A slot never extends past the window end, read on the resource's
+            // wall clock.
+            const end = wallClock(slot.end, zone);
+            expect(end.date).toBe(date);
+            expect(end.minutes).toBeLessThanOrEqual(win.end);
+            // Durations are elapsed minutes (DST days are 23 or 25 hours long).
             expect(slot.end.getTime() - slot.start.getTime()).toBe(
               service.duration_min * 60_000
             );
